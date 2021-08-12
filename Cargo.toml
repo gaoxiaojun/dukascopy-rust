@@ -1,0 +1,12 @@
+[package]
+name = "dukascopy"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+isahc="1.4.0"
+chrono="0.4.19"
+xz2 = "0.1"
+regex= "1.5.4"
