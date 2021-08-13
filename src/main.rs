@@ -9,6 +9,8 @@ use isahc::Response;
 use lazy_regex::regex_captures;
 use std::io::Cursor;
 use std::path::Path;
+use std::path::PathBuf;
+use structopt::StructOpt;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
@@ -41,8 +43,6 @@ pub struct UrlInfo {
     pub day: u32,
     pub hour: u32,
 }
-
-const DEFAULT_PATH: &'static str = "bi5";
 
 // dukascopy url模式
 // http://datafeed.dukascopy.com/datafeed/{品种}/{年}/{月}/{日}/{小时}h_ticks.bi5
@@ -136,10 +136,11 @@ async fn process_response(
     url: &str,
     mut response: Response<AsyncBody>,
     path: &Path,
+    verbose: bool,
 ) -> std::io::Result<()> {
-    //if response.status() != 200 {
+    if verbose {
         println!("{} --> {}", url, response.status());
-    //}
+    }
 
     let mut records: Vec<Record> = Vec::new();
 
@@ -177,17 +178,22 @@ async fn process_response(
 }
 
 // 返回出错的URL
-async fn download_urls(urls: Vec<String>, path: &Path) -> Vec<String> {
+async fn download_urls(urls: Vec<String>, path: &Path, verbose: bool) -> Vec<String> {
     let fetches = futures::stream::iter(urls.into_iter().map(|url| async move {
         let backup_url = url.clone();
         let response = isahc::get_async(url).await;
 
-        if response.is_ok() {
-            let resp = response.unwrap();
-            let _ = process_response(&backup_url, resp, path).await;
-            None
-        } else {
-            Some(backup_url)
+        match response {
+            Ok(resp) => {
+                let _ = process_response(&backup_url, resp, path, verbose).await;
+                None
+            }
+            Err(e) => {
+                if verbose {
+                    println!("{} --> {}", backup_url.red(), e);
+                }
+                Some(backup_url)
+            }
         }
     }))
     .buffer_unordered(24 * 15)
@@ -201,43 +207,77 @@ async fn download_urls(urls: Vec<String>, path: &Path) -> Vec<String> {
         .collect::<Vec<String>>()
 }
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "basic")]
+struct Opt {
+    /// Verbose mode
+    #[structopt(short, long)]
+    verbose: bool,
+
+    /// Output file
+    #[structopt(short, long, parse(from_os_str), default_value = "bi5")]
+    output: PathBuf,
+
+    /// Start date
+    #[structopt(short, long)]
+    start: Option<NaiveDate>,
+
+    /// End date
+    #[structopt(short, long)]
+    end: Option<NaiveDate>,
+
+    /// Symbols like EURUSD,GBPUSD
+    #[structopt(name = "SYMBOL")]
+    symbols: Vec<String>,
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let start = Utc.ymd(2003, 5, 5);
-    let end = Utc.ymd(2003, 5, 6);
-    let symbol = "eurusd";
+    let opt = Opt::from_args();
 
-    let mut path_buf = std::path::Path::new(&DEFAULT_PATH).to_path_buf();
-    path_buf.push(symbol.to_uppercase());
+    let start = match opt.start {
+        None => (Utc::now() - Duration::days(1)).date(),
+        Some(nd) => Date::<Utc>::from_utc(nd, Utc),
+    };
 
-    if !std::path::Path::new(path_buf.as_path()).exists() {
-        fs::create_dir_all(path_buf.as_path()).await?;
+    let end = match opt.end {
+        None => Utc::now().date(),
+        Some(nd) => Date::<Utc>::from_utc(nd, Utc),
+    };
+
+    for symbol in opt.symbols {
+        let mut path_buf = opt.output.clone();
+        path_buf.push(symbol.to_uppercase());
+
+        if !std::path::Path::new(path_buf.as_path()).exists() {
+            fs::create_dir_all(path_buf.as_path()).await?;
+        }
+
+        println!(
+            "Downloading {} from:{} to:{} ---> Write To {}",
+            symbol.to_uppercase().as_str().yellow(),
+            start.to_string().green(),
+            end.to_string().green(),
+            path_buf.as_path().to_str().unwrap().yellow()
+        );
+
+        let urls = build_urls(&symbol, start, end);
+        let mut error_urls = download_urls(urls, path_buf.as_path(), opt.verbose).await;
+
+        let mut retry_count = 3;
+        while error_urls.len() > 0 && retry_count > 0 {
+            println!("{}", "Retry...".yellow());
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            error_urls = download_urls(error_urls, path_buf.as_path(), opt.verbose).await;
+            retry_count -= 1;
+        }
+
+        if error_urls.len() > 0 {
+            println!("Error fetch urls = {:?}", error_urls);
+        } else {
+            println!("Done");
+        }
     }
-
-    println!(
-        "Downloading {} from:{} to:{} ---> Write To {}",
-        symbol.to_uppercase().as_str().yellow(),
-        start.to_string().green(),
-        end.to_string().green(),
-        path_buf.as_path().to_str().unwrap().yellow()
-    );
-
-    let urls = build_urls(symbol, start, end);
-    let mut error_urls = download_urls(urls, path_buf.as_path()).await;
-
-    let mut retry_count = 3;
-    while error_urls.len() > 0 && retry_count > 0{
-        println!("{}", "Retry...".yellow());
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        error_urls = download_urls(error_urls, path_buf.as_path()).await;
-        retry_count -= 1;
-    }
-
-    if error_urls.len() > 0 {
-        println!("Error fetch urls = {:?}", error_urls);
-    }
-
-    println!("Done");
 
     Ok(())
 }

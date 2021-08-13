@@ -12,4 +12,4 @@ lzma-rs = "0.2.0"
 byteorder = "1.4.3"
 lazy-regex ="2.2.1"
 colored = "2"
-
+structopt = "0.3"
