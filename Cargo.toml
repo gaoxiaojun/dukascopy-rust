@@ -11,4 +11,5 @@ chrono = "0.4.19"
 lzma-rs = "0.2.0"
 byteorder = "1.4.3"
 lazy-regex ="2.2.1"
+colored = "2"
 

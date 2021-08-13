@@ -1,15 +1,15 @@
 use byteorder::*;
 use chrono::prelude::*;
 use chrono::Duration;
+use colored::Colorize;
 use futures::stream::StreamExt;
 use isahc::prelude::*;
 use isahc::Body;
 use isahc::Response;
 use lazy_regex::regex_captures;
-use std::fs::File;
 use std::io::Cursor;
-use std::io::Write;
-use std::mem::size_of;
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug)]
 pub struct Record {
@@ -33,19 +33,15 @@ impl Record {
 }
 
 #[derive(Debug)]
-struct UrlInfo {
-    symbol: String,
-    year: i32,
-    month: u32,
-    day: u32,
-    hour: u32,
+pub struct UrlInfo {
+    pub symbol: String,
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+    pub hour: u32,
 }
 
-#[derive(Debug)]
-enum DownloadResult {
-    Records(Vec<Record>),
-    Error(String),
-}
+const DEFAULT_PATH: &'static str = "bi5";
 
 // dukascopy url模式
 // http://datafeed.dukascopy.com/datafeed/{品种}/{年}/{月}/{日}/{小时}h_ticks.bi5
@@ -109,114 +105,126 @@ fn decode_url(url: &str) -> UrlInfo {
     }
 }
 
-fn process_response(url: &str, mut response: Response<Body>) -> Vec<Record> {
-    println!("StatusCode:{}", response.status());
-    assert!(response.status() == 200 || response.status() == 404);
-    println!("{} --> {}", url, response.status());
+async fn write_to_file(info: &UrlInfo, records: &Vec<Record>) -> std::io::Result<()> {
+    let path = format!(
+        "{}/{}_{}_{:0>width$}_{:0>width$}_{:0>width$}h_ticks.bi5",
+        DEFAULT_PATH,
+        info.symbol,
+        info.year,
+        info.month,
+        info.day,
+        info.hour,
+        width = 2
+    );
+
+    let mut csv = fs::File::create(path).await?;
+    let header = format!("datetime, ask, bid, ask_vol, bid_vol\n");
+    csv.write_all(header.as_bytes()).await?;
+    let content = records
+        .iter()
+        .map(|r| format!("{},{},{},{},{}", r.dt, r.ask, r.bid, r.ask_vol, r.bid_vol))
+        .collect::<Vec<String>>()
+        .join("\n");
+    csv.write_all(content.as_bytes()).await?;
+    csv.flush().await
+}
+
+async fn process_response(url: &str, mut response: Response<Body>) -> std::io::Result<()> {
+    if response.status() != 200 {
+        println!("{} --> {}", url, response.status());
+    }
 
     let mut records: Vec<Record> = Vec::new();
 
-    if response.status() == 404 {
-        return records;
+    if response.status() == 200 && response.body().len().unwrap() != 0 {
+        let mut buf = vec![];
+        response.copy_to(&mut buf).unwrap();
+
+        let mut decomp: Vec<u8> = Vec::new();
+        lzma_rs::lzma_decompress(&mut buf.as_slice(), &mut decomp).unwrap();
+
+        let info = decode_url(url);
+
+        let decomp_len = decomp.len();
+        let mut cursor = Cursor::new(decomp);
+
+        let mut pos: usize = 0;
+
+        while pos < decomp_len {
+            let ms = cursor.read_i32::<BigEndian>().unwrap();
+            let dt_start = Utc
+                .ymd(info.year, info.month, info.day)
+                .and_hms(info.hour, 0, 0);
+            let dt = dt_start + Duration::milliseconds(ms as i64);
+            let ask = cursor.read_i32::<BigEndian>().unwrap() as f32 / 100000.0;
+            let bid = cursor.read_i32::<BigEndian>().unwrap() as f32 / 100000.0;
+            let ask_vol = cursor.read_f32::<BigEndian>().unwrap();
+            let bid_vol = cursor.read_f32::<BigEndian>().unwrap();
+            records.push(Record::new(dt, ask, bid, ask_vol, bid_vol));
+            pos += 20;
+        }
+
+        write_to_file(&info, &records).await?
     }
-
-    if response.body().len().unwrap() == 0 {
-        return records;
-    }
-
-    let mut buf = vec![];
-    response.copy_to(&mut buf).unwrap();
-
-    let mut decomp: Vec<u8> = Vec::new();
-    lzma_rs::lzma_decompress(&mut buf.as_slice(), &mut decomp).unwrap();
-
-    let info = decode_url(url);
-
-    let decomp_len = decomp.len();
-    let mut cursor = Cursor::new(decomp);
-
-    
-    let mut pos: usize = 0;
-
-    while pos < decomp_len {
-        let ms = cursor.read_i32::<BigEndian>().unwrap();
-        let dt_start = Utc
-            .ymd(info.year, info.month, info.day)
-            .and_hms(info.hour, 0, 0);
-        let dt = dt_start + Duration::milliseconds(ms as i64);
-        let ask = cursor.read_i32::<BigEndian>().unwrap() as f32 / 100000.0;
-        let bid = cursor.read_i32::<BigEndian>().unwrap() as f32 / 100000.0;
-        let ask_vol = cursor.read_f32::<BigEndian>().unwrap();
-        let bid_vol = cursor.read_f32::<BigEndian>().unwrap();
-        records.push(Record::new(dt, ask, bid, ask_vol, bid_vol));
-        pos += 20;
-    }
-    records
+    Ok(())
 }
 
 // 返回出错的URL
-async fn download_urls(urls: Vec<String>) -> Vec<DownloadResult> {
+async fn download_urls(urls: Vec<String>) -> Vec<String> {
     let fetches = futures::stream::iter(urls.into_iter().map(|url| async move {
         let backup_url = url.clone();
         let response = isahc::get(url);
 
         if response.is_ok() {
             let resp = response.unwrap();
-            let records = process_response(&backup_url, resp);
-            DownloadResult::Records(records)
+            let _ = process_response(&backup_url, resp).await;
+            None
         } else {
-            DownloadResult::Error(backup_url)
+            Some(backup_url)
         }
     }))
-    .buffer_unordered(24*15)
-    .collect::<Vec<DownloadResult>>();
+    .buffer_unordered(24 * 15)
+    .collect::<Vec<Option<String>>>();
 
-    fetches.await
-    //.into_iter()
-    //.filter(|value| value.is_some())
-    //.map(|v| v.unwrap())
-    //.collect::<Vec<String>>()
+    fetches
+        .await
+        .into_iter()
+        .filter(|value| value.is_some())
+        .map(|v| v.unwrap())
+        .collect::<Vec<String>>()
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> std::io::Result<()> {
+    if !std::path::Path::new(&DEFAULT_PATH).exists() {
+        fs::create_dir_all(DEFAULT_PATH).await?;
+    }
+
     let start = Utc.ymd(2003, 5, 5);
-    let end = Utc.ymd(2003, 11, 3);
-    let instrument = "eurusd";
+    let end = Utc.ymd(2003, 5, 6);
+    let symbol = "eurusd";
 
-    let urls = build_urls(instrument, start, end);
-    println!("urls {}", urls.len());
-    let result = download_urls(urls).await;
+    println!(
+        "Downloading {} from:{} to:{}",
+        symbol.to_uppercase().as_str().yellow(),
+        start.to_string().green(),
+        end.to_string().green()
+    );
 
-    let mut error_urls: Vec<String> = Vec::new();
-    let mut records: Vec<Record> = Vec::new();
-    for item in result {
-        match item {
-            DownloadResult::Records(record) => records.extend(record),
-            DownloadResult::Error(url) => {
-                error_urls.push(url);
-            }
-        }
+    let urls = build_urls(symbol, start, end);
+    let error_urls = download_urls(urls).await;
+
+    if error_urls.len() > 0 {
+        println!(
+            "Downloading finished, {} = {:?}\n",
+            "ERROR_URLS".red(),
+            error_urls
+        );
+    } else {
+        println!("Done");
     }
 
-    records.sort_by(|a, b| a.dt.cmp(&b.dt));
-
-    //for v in records {
-    //    println!("{} {} {} {} {}", v.dt, v.ask, v.bid, v.ask_vol, v.bid_vol);
-    //}
-
-    println!("erros={:?}", error_urls);
-    println!("record size = {}", size_of::<Record>());
-
-    let mut csvfile = File::create("eurusd.csv").unwrap();
-
-    csvfile.write("datetime,ask,bid,ask_vol,bid_vol\n".as_bytes()).unwrap();
-
-    for v in records {
-        let r = format!("{},{},{},{},{}\n", v.dt, v.ask, v.bid, v.ask_vol, v.bid_vol);
-        csvfile.write(r.as_bytes()).unwrap();
-    }
-    csvfile.flush().unwrap();
+    Ok(())
 }
 
 #[cfg(test)]
