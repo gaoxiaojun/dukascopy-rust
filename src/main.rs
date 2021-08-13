@@ -8,6 +8,7 @@ use isahc::Body;
 use isahc::Response;
 use lazy_regex::regex_captures;
 use std::io::Cursor;
+use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
@@ -105,10 +106,9 @@ fn decode_url(url: &str) -> UrlInfo {
     }
 }
 
-async fn write_to_file(info: &UrlInfo, records: &Vec<Record>) -> std::io::Result<()> {
-    let path = format!(
-        "{}/{}_{}_{:0>width$}_{:0>width$}_{:0>width$}h_ticks.bi5",
-        DEFAULT_PATH,
+async fn write_to_file(info: &UrlInfo, records: &Vec<Record>, path: &Path) -> std::io::Result<()> {
+    let filename = format!(
+        "{}_{}_{:0>width$}_{:0>width$}_{:0>width$}h_ticks.bi5",
         info.symbol,
         info.year,
         info.month,
@@ -117,7 +117,10 @@ async fn write_to_file(info: &UrlInfo, records: &Vec<Record>) -> std::io::Result
         width = 2
     );
 
-    let mut csv = fs::File::create(path).await?;
+    let mut path_buf = path.to_path_buf();
+    path_buf.push(filename);
+
+    let mut csv = fs::File::create(path_buf.as_path()).await?;
     let header = format!("datetime, ask, bid, ask_vol, bid_vol\n");
     csv.write_all(header.as_bytes()).await?;
     let content = records
@@ -129,7 +132,7 @@ async fn write_to_file(info: &UrlInfo, records: &Vec<Record>) -> std::io::Result
     csv.flush().await
 }
 
-async fn process_response(url: &str, mut response: Response<Body>) -> std::io::Result<()> {
+async fn process_response(url: &str, mut response: Response<Body>, path: &Path) -> std::io::Result<()> {
     if response.status() != 200 {
         println!("{} --> {}", url, response.status());
     }
@@ -164,20 +167,20 @@ async fn process_response(url: &str, mut response: Response<Body>) -> std::io::R
             pos += 20;
         }
 
-        write_to_file(&info, &records).await?
+        write_to_file(&info, &records, path).await?
     }
     Ok(())
 }
 
 // 返回出错的URL
-async fn download_urls(urls: Vec<String>) -> Vec<String> {
+async fn download_urls(urls: Vec<String>, path: &Path) -> Vec<String> {
     let fetches = futures::stream::iter(urls.into_iter().map(|url| async move {
         let backup_url = url.clone();
         let response = isahc::get(url);
 
         if response.is_ok() {
             let resp = response.unwrap();
-            let _ = process_response(&backup_url, resp).await;
+            let _ = process_response(&backup_url, resp, path).await;
             None
         } else {
             Some(backup_url)
@@ -196,27 +199,31 @@ async fn download_urls(urls: Vec<String>) -> Vec<String> {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    if !std::path::Path::new(&DEFAULT_PATH).exists() {
-        fs::create_dir_all(DEFAULT_PATH).await?;
-    }
-
     let start = Utc.ymd(2003, 5, 5);
     let end = Utc.ymd(2003, 5, 6);
     let symbol = "eurusd";
 
+    let mut path_buf = std::path::Path::new(&DEFAULT_PATH).to_path_buf();
+    path_buf.push(symbol.to_uppercase());
+
+    if !std::path::Path::new(path_buf.as_path()).exists() {
+        fs::create_dir_all(path_buf.as_path()).await?;
+    }
+
     println!(
-        "Downloading {} from:{} to:{}",
+        "Downloading {} from:{} to:{} ---> Write To {}",
         symbol.to_uppercase().as_str().yellow(),
         start.to_string().green(),
-        end.to_string().green()
+        end.to_string().green(),
+        path_buf.as_path().to_str().unwrap().yellow()
     );
 
     let urls = build_urls(symbol, start, end);
-    let error_urls = download_urls(urls).await;
+    let error_urls = download_urls(urls, path_buf.as_path()).await;
 
     if error_urls.len() > 0 {
         println!(
-            "Downloading finished, {} = {:?}\n",
+            "{} = {:?}\n",
             "ERROR_URLS".red(),
             error_urls
         );
