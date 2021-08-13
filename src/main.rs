@@ -208,23 +208,27 @@ async fn download_urls(urls: Vec<String>, path: &Path, verbose: bool) -> Vec<Str
 }
 
 #[derive(StructOpt, Debug)]
-#[structopt(name = "basic")]
+#[structopt(name = "DukascopyTickerDownloader", about = "An cli tool to download dukascopy ticker data.")]
 struct Opt {
     /// Verbose mode
     #[structopt(short, long)]
     verbose: bool,
 
-    /// Output file
+    /// Output Direction
     #[structopt(short, long, parse(from_os_str), default_value = "bi5")]
     output: PathBuf,
 
-    /// Start date
+    /// Start Date, [default: Today - 1]
     #[structopt(short, long)]
     start: Option<NaiveDate>,
 
-    /// End date
+    /// End Date, [default: Today]
     #[structopt(short, long)]
     end: Option<NaiveDate>,
+
+     /// Retry Count
+     #[structopt(short, long, default_value = "3")]
+     retry_count: u8,
 
     /// Symbols like EURUSD,GBPUSD
     #[structopt(name = "SYMBOL")]
@@ -264,7 +268,7 @@ async fn main() -> std::io::Result<()> {
         let urls = build_urls(&symbol, start, end);
         let mut error_urls = download_urls(urls, path_buf.as_path(), opt.verbose).await;
 
-        let mut retry_count = 3;
+        let mut retry_count = opt.retry_count as i32;
         while error_urls.len() > 0 && retry_count > 0 {
             println!("{}", "Retry...".yellow());
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
