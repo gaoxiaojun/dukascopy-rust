@@ -4,7 +4,7 @@ use chrono::Duration;
 use colored::Colorize;
 use futures::stream::StreamExt;
 use isahc::prelude::*;
-use isahc::Body;
+use isahc::AsyncBody;
 use isahc::Response;
 use lazy_regex::regex_captures;
 use std::io::Cursor;
@@ -132,16 +132,20 @@ async fn write_to_file(info: &UrlInfo, records: &Vec<Record>, path: &Path) -> st
     csv.flush().await
 }
 
-async fn process_response(url: &str, mut response: Response<Body>, path: &Path) -> std::io::Result<()> {
-    if response.status() != 200 {
+async fn process_response(
+    url: &str,
+    mut response: Response<AsyncBody>,
+    path: &Path,
+) -> std::io::Result<()> {
+    //if response.status() != 200 {
         println!("{} --> {}", url, response.status());
-    }
+    //}
 
     let mut records: Vec<Record> = Vec::new();
 
     if response.status() == 200 && response.body().len().unwrap() != 0 {
         let mut buf = vec![];
-        response.copy_to(&mut buf).unwrap();
+        response.copy_to(&mut buf).await?;
 
         let mut decomp: Vec<u8> = Vec::new();
         lzma_rs::lzma_decompress(&mut buf.as_slice(), &mut decomp).unwrap();
@@ -176,7 +180,7 @@ async fn process_response(url: &str, mut response: Response<Body>, path: &Path) 
 async fn download_urls(urls: Vec<String>, path: &Path) -> Vec<String> {
     let fetches = futures::stream::iter(urls.into_iter().map(|url| async move {
         let backup_url = url.clone();
-        let response = isahc::get(url);
+        let response = isahc::get_async(url).await;
 
         if response.is_ok() {
             let resp = response.unwrap();
@@ -219,17 +223,21 @@ async fn main() -> std::io::Result<()> {
     );
 
     let urls = build_urls(symbol, start, end);
-    let error_urls = download_urls(urls, path_buf.as_path()).await;
+    let mut error_urls = download_urls(urls, path_buf.as_path()).await;
+
+    let mut retry_count = 3;
+    while error_urls.len() > 0 && retry_count > 0{
+        println!("{}", "Retry...".yellow());
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        error_urls = download_urls(error_urls, path_buf.as_path()).await;
+        retry_count -= 1;
+    }
 
     if error_urls.len() > 0 {
-        println!(
-            "{} = {:?}\n",
-            "ERROR_URLS".red(),
-            error_urls
-        );
-    } else {
-        println!("Done");
+        println!("Error fetch urls = {:?}", error_urls);
     }
+
+    println!("Done");
 
     Ok(())
 }
