@@ -51,7 +51,15 @@ async fn main() -> std::io::Result<()> {
     };
 
     for symbol in opt.symbols {
-        let _ =downloader::download(&symbol, &opt.output, start, end, opt.retry_count, opt.verbose).await?;
+        let _ = downloader::download(
+            &symbol,
+            &opt.output,
+            start,
+            end,
+            opt.retry_count,
+            opt.verbose,
+        )
+        .await?;
     }
 
     Ok(())

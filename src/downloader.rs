@@ -134,7 +134,7 @@ async fn write_to_file(info: &UrlInfo, records: &Vec<Record>, path: &Path) -> st
 async fn process_response(
     url: &str,
     mut response: Response<AsyncBody>,
-    path: &Path
+    path: &Path,
 ) -> std::io::Result<()> {
     let mut records: Vec<Record> = Vec::new();
 
@@ -208,40 +208,47 @@ async fn download_urls(urls: Vec<String>, path: &Path, verbose: bool) -> Vec<Str
 }
 
 // 返回出错的URL
-pub async fn download(symbol:&str, output:&PathBuf,start:Date<Utc>, end:Date<Utc>, retry_count: u8, verbose:bool)-> std::io::Result<Vec<String>>  {
+pub async fn download(
+    symbol: &str,
+    output: &PathBuf,
+    start: Date<Utc>,
+    end: Date<Utc>,
+    retry_count: u8,
+    verbose: bool,
+) -> std::io::Result<Vec<String>> {
     let mut path_buf = output.clone();
-        path_buf.push(symbol.to_uppercase());
+    path_buf.push(symbol.to_uppercase());
 
-        if !std::path::Path::new(path_buf.as_path()).exists() {
-            fs::create_dir_all(path_buf.as_path()).await?;
-        }
+    if !std::path::Path::new(path_buf.as_path()).exists() {
+        fs::create_dir_all(path_buf.as_path()).await?;
+    }
 
-        println!(
-            "Downloading {} from:{} to:{} ---> Write To {}",
-            symbol.to_uppercase().as_str().yellow(),
-            start.to_string().green(),
-            end.to_string().green(),
-            path_buf.as_path().to_str().unwrap().yellow()
-        );
+    println!(
+        "Downloading {} from:{} to:{} ---> Write To {}",
+        symbol.to_uppercase().as_str().yellow(),
+        start.to_string().green(),
+        end.to_string().green(),
+        path_buf.as_path().to_str().unwrap().yellow()
+    );
 
-        let urls = build_urls(&symbol, start, end);
-        let mut error_urls = download_urls(urls, path_buf.as_path(), verbose).await;
+    let urls = build_urls(&symbol, start, end);
+    let mut error_urls = download_urls(urls, path_buf.as_path(), verbose).await;
 
-        let mut retry_count = retry_count as i32;
-        while error_urls.len() > 0 && retry_count > 0 {
-            println!("{}", format!("Retry({})", retry_count).yellow());
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            error_urls = download_urls(error_urls, path_buf.as_path(), verbose).await;
-            retry_count -= 1;
-        }
+    let mut retry_count = retry_count as i32;
+    while error_urls.len() > 0 && retry_count > 0 {
+        println!("{}", format!("Retry({})", retry_count).yellow());
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        error_urls = download_urls(error_urls, path_buf.as_path(), verbose).await;
+        retry_count -= 1;
+    }
 
-        if error_urls.len() > 0 {
-            println!("Error fetch urls = {:?}", error_urls);
-        } else {
-            println!("Done");
-        }
+    if error_urls.len() > 0 {
+        println!("Error fetch urls = {:?}", error_urls);
+    } else {
+        println!("Done");
+    }
 
-        Ok(error_urls)
+    Ok(error_urls)
 }
 
 #[cfg(test)]
