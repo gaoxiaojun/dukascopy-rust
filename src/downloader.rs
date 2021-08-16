@@ -7,11 +7,14 @@ use isahc::prelude::*;
 use isahc::AsyncBody;
 use isahc::Response;
 use lazy_regex::regex_captures;
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+
+use crate::meta::InstrumentMeta;
 
 #[derive(Debug)]
 pub struct Record {
@@ -135,6 +138,7 @@ async fn process_response(
     url: &str,
     mut response: Response<AsyncBody>,
     path: &Path,
+    meta_dict: &HashMap<String, InstrumentMeta>,
 ) -> std::io::Result<()> {
     let mut records: Vec<Record> = Vec::new();
 
@@ -146,6 +150,7 @@ async fn process_response(
         lzma_rs::lzma_decompress(&mut buf.as_slice(), &mut decomp).unwrap();
 
         let info = decode_url(url);
+        let meta_info = &meta_dict[&info.symbol.to_uppercase()];
 
         let decomp_len = decomp.len();
         let mut cursor = Cursor::new(decomp);
@@ -158,8 +163,8 @@ async fn process_response(
                 .ymd(info.year, info.month, info.day)
                 .and_hms(info.hour, 0, 0);
             let dt = dt_start + Duration::milliseconds(ms as i64);
-            let ask = cursor.read_i32::<BigEndian>().unwrap() as f32 / 100000.0;
-            let bid = cursor.read_i32::<BigEndian>().unwrap() as f32 / 100000.0;
+            let ask = cursor.read_i32::<BigEndian>().unwrap() as f32 / meta_info.point;
+            let bid = cursor.read_i32::<BigEndian>().unwrap() as f32 / meta_info.point;
             let ask_vol = cursor.read_f32::<BigEndian>().unwrap();
             let bid_vol = cursor.read_f32::<BigEndian>().unwrap();
             records.push(Record::new(dt, ask, bid, ask_vol, bid_vol));
@@ -172,7 +177,12 @@ async fn process_response(
 }
 
 // 返回出错的URL
-async fn download_urls(urls: Vec<String>, path: &Path, verbose: bool) -> Vec<String> {
+async fn download_urls(
+    meta_dict: &HashMap<String, InstrumentMeta>,
+    urls: Vec<String>,
+    path: &Path,
+    verbose: bool,
+) -> Vec<String> {
     let fetches = futures::stream::iter(urls.into_iter().map(|url| async move {
         let backup_url = url.clone();
         let response = isahc::get_async(url).await;
@@ -182,7 +192,7 @@ async fn download_urls(urls: Vec<String>, path: &Path, verbose: bool) -> Vec<Str
                     println!("{} --> {}", backup_url, resp.status());
                 }
                 if resp.status() == 200 || resp.status() == 404 {
-                    let _ = process_response(&backup_url, resp, path).await;
+                    let _ = process_response(&backup_url, resp, path, meta_dict).await;
                     None
                 } else {
                     Some(backup_url)
@@ -196,7 +206,7 @@ async fn download_urls(urls: Vec<String>, path: &Path, verbose: bool) -> Vec<Str
             }
         }
     }))
-    .buffer_unordered(24 * 15)
+    .buffered(24)
     .collect::<Vec<Option<String>>>();
 
     fetches
@@ -209,11 +219,12 @@ async fn download_urls(urls: Vec<String>, path: &Path, verbose: bool) -> Vec<Str
 
 // 返回出错的URL
 pub async fn download(
+    meta_dict: &HashMap<String, InstrumentMeta>,
     symbol: &str,
     output: &PathBuf,
     start: Date<Utc>,
     end: Date<Utc>,
-    retry_count: u8,
+    retry_count: u16,
     verbose: bool,
 ) -> std::io::Result<Vec<String>> {
     let mut path_buf = output.clone();
@@ -232,13 +243,13 @@ pub async fn download(
     );
 
     let urls = build_urls(&symbol, start, end);
-    let mut error_urls = download_urls(urls, path_buf.as_path(), verbose).await;
+    let mut error_urls = download_urls(meta_dict, urls, path_buf.as_path(), verbose).await;
 
     let mut retry_count = retry_count as i32;
     while error_urls.len() > 0 && retry_count > 0 {
         println!("{}", format!("Retry({})", retry_count).yellow());
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        error_urls = download_urls(error_urls, path_buf.as_path(), verbose).await;
+        error_urls = download_urls(meta_dict, error_urls, path_buf.as_path(), verbose).await;
         retry_count -= 1;
     }
 

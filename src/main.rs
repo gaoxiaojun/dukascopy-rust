@@ -1,7 +1,8 @@
 mod downloader;
-
+mod meta;
 use chrono::prelude::*;
 use chrono::Duration;
+use colored::Colorize;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -29,7 +30,7 @@ struct Opt {
 
     /// Retry Count
     #[structopt(short, long, default_value = "10")]
-    retry_count: u8,
+    retry_count: u16,
 
     /// Symbols like EURUSD,GBPUSD
     #[structopt(name = "SYMBOL")]
@@ -39,6 +40,25 @@ struct Opt {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let opt = Opt::from_args();
+
+    println!("{} instruments meta info...", "Fetching".yellow());
+    let meta_dict = meta::build_meta_info();
+
+    let mut error_symbols: Vec<String> = Vec::new();
+    for symbol in &opt.symbols {
+        if !meta_dict.contains_key(&symbol.to_uppercase()) {
+            error_symbols.push(symbol.clone());
+        }
+    }
+
+    if error_symbols.len() > 0 {
+        println!(
+            "{}:Cannot found symbol {}",
+            "Error".red(),
+            error_symbols.join(",").yellow()
+        );
+        return Ok(());
+    }
 
     let start = match opt.start {
         None => (Utc::now() - Duration::days(1)).date(),
@@ -50,11 +70,19 @@ async fn main() -> std::io::Result<()> {
         Some(nd) => Date::<Utc>::from_utc(nd, Utc),
     };
 
-    for symbol in opt.symbols {
+    for symbol in &opt.symbols {
+        let info = &meta_dict[symbol];
+        let start_date = if start < info.history_start_tick.date() {
+            info.history_start_tick.date()
+        } else {
+            start
+        };
+
         let _ = downloader::download(
-            &symbol,
+            &meta_dict,
+            symbol,
             &opt.output,
-            start,
+            start_date,
             end,
             opt.retry_count,
             opt.verbose,
