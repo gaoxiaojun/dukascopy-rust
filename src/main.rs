@@ -13,8 +13,13 @@ use structopt::StructOpt;
     about = "An cli tool to download/merge/aggregator dukascopy tick data."
 )]
 enum Opt {
+    /// Download Tick Data
     Download(DownloadOptions),
+
+    /// Merge Separate Tick Data Files
     Merge(MergeOptions),
+
+    /// Aggregator Tick Data To Candle
     Aggregator(AggregatorOptions),
 }
 
