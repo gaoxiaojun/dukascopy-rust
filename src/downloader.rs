@@ -235,8 +235,9 @@ pub async fn download(
     }
 
     println!(
-        "Downloading {} from:{} to:{} ---> Write To {}",
-        symbol.to_uppercase().as_str().yellow(),
+        "{} {} from:{} to:{} ---> Write To {}",
+        "Downloading".yellow(),
+        symbol.to_uppercase().as_str().cyan(),
         start.to_string().green(),
         end.to_string().green(),
         path_buf.as_path().to_str().unwrap().yellow()
@@ -245,18 +246,18 @@ pub async fn download(
     let urls = build_urls(&symbol, start, end);
     let mut error_urls = download_urls(meta_dict, urls, path_buf.as_path(), verbose).await;
 
-    let mut retry_count = retry_count as i32;
-    while error_urls.len() > 0 && retry_count > 0 {
-        println!("{}", format!("Retry({})", retry_count).yellow());
+    let mut index = 0;
+    while error_urls.len() > 0 && index <= retry_count {
+        println!("{}", format!("Retry({}/{})", index, retry_count).yellow());
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         error_urls = download_urls(meta_dict, error_urls, path_buf.as_path(), verbose).await;
-        retry_count -= 1;
+        index += 1;
     }
 
     if error_urls.len() > 0 {
-        println!("Error fetch urls = {:?}", error_urls);
+        println!("{} fetch urls = {:?}", "Error".red(), error_urls);
     } else {
-        println!("Done");
+        println!("{}", "Done".green());
     }
 
     Ok(error_urls)

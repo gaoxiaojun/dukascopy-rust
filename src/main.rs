@@ -41,8 +41,15 @@ struct Opt {
 async fn main() -> std::io::Result<()> {
     let opt = Opt::from_args();
 
-    println!("{} instruments meta info...", "Fetching".yellow());
+    print!("{} instruments meta info...", "Fetching".yellow());
     let meta_dict = meta::build_meta_info();
+
+    if meta_dict.len() > 0 {
+        println!("{}", "Done".green());
+    }else {
+        println!("{}", "Error!".red());
+        return Ok(());
+    }
 
     let mut error_symbols: Vec<String> = Vec::new();
     for symbol in &opt.symbols {
