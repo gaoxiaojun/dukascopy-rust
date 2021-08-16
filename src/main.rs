@@ -3,13 +3,14 @@ mod meta;
 use chrono::prelude::*;
 use chrono::Duration;
 use colored::Colorize;
+use std::io::Write;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
 #[structopt(
     name = "DukascopyCLI",
-    about = "An cli tool to download/merge/aggregator dukascopy ticker data."
+    about = "An cli tool to download/merge/aggregator dukascopy tick data."
 )]
 enum Opt {
     Download(DownloadOptions),
@@ -51,11 +52,11 @@ struct MergeOptions {
     verbose: bool,
 
     /// Source Direction
-    #[structopt(short, long, parse(from_os_str))]
+    #[structopt(short, long, parse(from_os_str), default_value = "bi5")]
     input: PathBuf,
 
     /// Output Direction
-    #[structopt(short, long, parse(from_os_str))]
+    #[structopt(short, long, parse(from_os_str), default_value = "bi5")]
     output: PathBuf,
 
     /// Symbols like EURUSD GBPUSD, split by whitespace
@@ -69,21 +70,17 @@ struct AggregatorOptions {
     #[structopt(short, long)]
     verbose: bool,
 
-    /// Output Direction
+    /// Source Tick Data File
+    #[structopt(short, long, parse(from_os_str))]
+    input: PathBuf,
+
+    /// Output Aggregator Csv File
     #[structopt(short, long, parse(from_os_str))]
     output: PathBuf,
 
-    /// Symbols like EURUSD GBPUSD, split by whitespace
-    #[structopt(name = "SYMBOLS")]
-    symbols: Vec<String>,
-
-    /// Start Date, [default: Today - 1]
+    /// Aggregator Timeframe, like 15s 1m 1h 1d 1w 1m 1y
     #[structopt(short, long)]
-    start: Option<NaiveDate>,
-
-    /// End Date, [default: Today]
-    #[structopt(short, long)]
-    end: Option<NaiveDate>,
+    timeframe: String,
 }
 
 async fn command_download(opt: &DownloadOptions) -> std::io::Result<()> {
@@ -145,6 +142,56 @@ async fn command_download(opt: &DownloadOptions) -> std::io::Result<()> {
     Ok(())
 }
 
+fn command_merge(opt: &MergeOptions) -> std::io::Result<()> {
+    for symbol in &opt.symbols {
+        if !opt.input.is_dir() {
+            return Ok(());
+        }
+
+        let mut output_path = opt.output.clone();
+        output_path.push(format!("{}.csv", symbol.to_uppercase()));
+        let mut csv_file = std::fs::File::create(&output_path)?;
+        let mut bi5_files: Vec<PathBuf> = Vec::new();
+
+        let mut input_path = opt.input.clone();
+        input_path.push(symbol.to_uppercase());
+        for entry in std::fs::read_dir(&input_path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                bi5_files.push(path);
+            }
+        }
+
+        bi5_files.sort();
+
+        println!("{} {} files", "Find".yellow(), bi5_files.len());
+
+        for path in &bi5_files {
+            if opt.verbose {
+                println!("{} {}", "Reading".yellow(), path.to_str().unwrap());
+            }
+            let mut file = std::fs::File::open(path)?;
+            std::io::copy(&mut file, &mut csv_file)?;
+        }
+        csv_file.flush()?;
+
+        println!(
+            "{} {} {}",
+            "Written".yellow(),
+            output_path.to_str().unwrap(),
+            "Done".green()
+        );
+    }
+
+    Ok(())
+}
+
+fn command_aggregator(opt: &AggregatorOptions) -> std::io::Result<()> {
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let options = Opt::from_args();
@@ -153,8 +200,12 @@ async fn main() -> std::io::Result<()> {
         Opt::Download(opt) => {
             let _ = command_download(&opt).await;
         }
-        Opt::Merge(_opt) => {}
-        Opt::Aggregator(_opt) => {}
+        Opt::Merge(opt) => {
+            let _ = command_merge(&opt);
+        }
+        Opt::Aggregator(opt) => {
+            let _ = command_aggregator(&opt);
+        }
     }
     Ok(())
 }

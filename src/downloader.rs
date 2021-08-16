@@ -123,8 +123,6 @@ async fn write_to_file(info: &UrlInfo, records: &Vec<Record>, path: &Path) -> st
     path_buf.push(filename);
 
     let mut csv = fs::File::create(path_buf.as_path()).await?;
-    let header = format!("datetime, ask, bid, ask_vol, bid_vol\n");
-    csv.write_all(header.as_bytes()).await?;
     let content = records
         .iter()
         .map(|r| format!("{},{},{},{},{}", r.dt, r.ask, r.bid, r.ask_vol, r.bid_vol))
