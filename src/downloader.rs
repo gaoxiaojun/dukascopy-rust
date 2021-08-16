@@ -246,7 +246,7 @@ pub async fn download(
     let urls = build_urls(&symbol, start, end);
     let mut error_urls = download_urls(meta_dict, urls, path_buf.as_path(), verbose).await;
 
-    let mut index = 0;
+    let mut index = 1;
     while error_urls.len() > 0 && index <= retry_count {
         println!("{}", format!("Retry({}/{})", index, retry_count).yellow());
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
