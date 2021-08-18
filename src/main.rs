@@ -178,6 +178,7 @@ fn command_merge(opt: &MergeOptions) -> std::io::Result<()> {
             }
             let mut file = std::fs::File::open(path)?;
             std::io::copy(&mut file, &mut csv_file)?;
+            csv_file.write("\n".as_bytes())?;
         }
         csv_file.flush()?;
 
