@@ -3,6 +3,7 @@ mod meta;
 use chrono::prelude::*;
 use chrono::Duration;
 use colored::Colorize;
+use meta::download_meta_info;
 use std::io::Write;
 use std::path::PathBuf;
 use structopt::StructOpt;
@@ -13,6 +14,9 @@ use structopt::StructOpt;
     about = "An cli tool to download/merge/aggregator dukascopy tick data."
 )]
 enum Opt {
+    /// Download Meta Info
+    Meta(MetaOptions),
+
     /// Download Tick Data
     Download(DownloadOptions),
 
@@ -21,6 +25,21 @@ enum Opt {
 
     /// Aggregator Tick Data To Candle
     Aggregator(AggregatorOptions),
+}
+
+#[derive(StructOpt, Debug)]
+pub struct MetaOptions {
+    /// Verbose mode
+    #[structopt(short, long)]
+    verbose: bool,
+
+    /// Output Meta File
+    #[structopt(short, long, parse(from_os_str))]
+    output: PathBuf,
+
+    /// Retry Count
+    #[structopt(short, long, default_value = "3")]
+    retry_count: u16,
 }
 
 #[derive(StructOpt, Debug)]
@@ -194,6 +213,11 @@ fn command_merge(opt: &MergeOptions) -> std::io::Result<()> {
 }
 
 fn command_aggregator(opt: &AggregatorOptions) -> std::io::Result<()> {
+    Ok(())
+}
+
+fn command_meta(opt: &MetaOptions) -> std::io::Result<()> {
+    download_meta_info(opt);
 
     Ok(())
 }
@@ -211,6 +235,9 @@ async fn main() -> std::io::Result<()> {
         }
         Opt::Aggregator(opt) => {
             let _ = command_aggregator(&opt);
+        }
+        Opt::Meta(opt) => {
+            let _ = command_meta(&opt);
         }
     }
     Ok(())

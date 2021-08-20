@@ -1,13 +1,68 @@
 use chrono::offset::TimeZone;
 use chrono::{DateTime, Utc};
+use colored::Colorize;
 use isahc::{config::Configurable, ReadResponseExt, Request, RequestExt};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::io::Write;
+
+use crate::MetaOptions;
 
 #[derive(Debug)]
 pub struct InstrumentMeta {
     pub point: f32,
     pub history_start_tick: DateTime<Utc>,
+}
+
+fn download_and_retry(opt: &MetaOptions) -> Option<String> {
+    if opt.verbose {
+        print!("{} meta info", "Fetching..".yellow());
+    }
+    let mut index: u16 = 0;
+    while index < opt.retry_count {
+        let meta_data = fetch_meta_data();
+        if meta_data.is_some() {
+            if opt.verbose {
+                println!("  {}", "Done".green());
+            }
+            return meta_data;
+        }
+        index += 1;
+    }
+    println!("  {}", "Error".red());
+    None
+}
+
+pub fn download_meta_info(opt: &MetaOptions) {
+    let meta_data = download_and_retry(opt);
+    if meta_data.is_none() {
+        return;
+    }
+
+    if opt.verbose {
+        print!(
+            "{} {}",
+            "Writing...".yellow(),
+            opt.output.as_path().to_str().unwrap()
+        );
+    }
+
+    let json = std::fs::File::create(&opt.output);
+    if json.is_err() {
+        println!("  {} to create file", "Error".red());
+        return;
+    }
+    let mut json = json.unwrap();
+    
+    let write_result = json.write_all(meta_data.unwrap().as_bytes());
+    if write_result.is_err() {
+        println!("  {} to write file", "Error".red());
+        return;
+    }
+
+    if opt.verbose {
+        println!("  {}", "Done".green());
+    }
 }
 
 pub fn build_meta_info() -> HashMap<String, InstrumentMeta> {
