@@ -61,7 +61,7 @@ fn build_day_urls(instrument: &str, dt: Date<Utc>) -> Vec<String> {
     for h in 0..24 {
         let url = format!(
             "http://datafeed.dukascopy.com/datafeed/{}/{}/{:0>width$}/{:0>width$}/{:0>width$}h_ticks.bi5",
-            instrument.to_uppercase(),
+            instrument,
             y,
             m as usize,
             d,
@@ -148,7 +148,7 @@ async fn process_response(
         lzma_rs::lzma_decompress(&mut buf.as_slice(), &mut decomp).unwrap();
 
         let info = decode_url(url);
-        let meta_info = &meta_dict[&info.symbol.to_uppercase()];
+        let meta_info = &meta_dict[&info.symbol];
 
         let decomp_len = decomp.len();
         let mut cursor = Cursor::new(decomp);
@@ -226,7 +226,7 @@ pub async fn download(
     verbose: bool,
 ) -> std::io::Result<Vec<String>> {
     let mut path_buf = output.clone();
-    path_buf.push(symbol.to_uppercase());
+    path_buf.push(symbol);
 
     if !std::path::Path::new(path_buf.as_path()).exists() {
         fs::create_dir_all(path_buf.as_path()).await?;
@@ -235,7 +235,7 @@ pub async fn download(
     println!(
         "{} {} from:{} to:{} ---> Write To {}",
         "Downloading".yellow(),
-        symbol.to_uppercase().as_str().cyan(),
+        symbol.cyan(),
         start.to_string().green(),
         end.to_string().green(),
         path_buf.as_path().to_str().unwrap().yellow()

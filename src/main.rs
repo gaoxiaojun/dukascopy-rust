@@ -34,7 +34,7 @@ pub struct MetaOptions {
     verbose: bool,
 
     /// Output Meta File
-    #[structopt(short, long, parse(from_os_str))]
+    #[structopt(short, long, parse(from_os_str), default_value="meta.json")]
     output: PathBuf,
 
     /// Retry Count
@@ -120,7 +120,7 @@ async fn command_download(opt: &DownloadOptions) -> std::io::Result<()> {
 
     let mut error_symbols: Vec<String> = Vec::new();
     for symbol in &opt.symbols {
-        if !meta_dict.contains_key(&symbol.to_uppercase()) {
+        if !meta_dict.contains_key(symbol) {
             error_symbols.push(symbol.clone());
         }
     }
@@ -173,12 +173,12 @@ fn command_merge(opt: &MergeOptions) -> std::io::Result<()> {
         }
 
         let mut output_path = opt.output.clone();
-        output_path.push(format!("{}.csv", symbol.to_uppercase()));
+        output_path.push(format!("{}.csv", symbol));
         let mut csv_file = std::fs::File::create(&output_path)?;
         let mut bi5_files: Vec<PathBuf> = Vec::new();
 
         let mut input_path = opt.input.clone();
-        input_path.push(symbol.to_uppercase());
+        input_path.push(symbol);
         for entry in std::fs::read_dir(&input_path)? {
             let entry = entry?;
             let path = entry.path();

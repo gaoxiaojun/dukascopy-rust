@@ -85,7 +85,7 @@ pub fn build_meta_info() -> HashMap<String, InstrumentMeta> {
                     history_start_tick: start,
                 };
                 let key = k.clone().replace("/", "");
-                info_map.insert(key.to_uppercase(), info);
+                info_map.insert(key, info);
             }
         }
     }
